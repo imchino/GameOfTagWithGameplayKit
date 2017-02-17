@@ -10,80 +10,101 @@ import SpriteKit
 import GameplayKit
 
 class GameScene: SKScene {
+    let player = SKShapeNode(circleOfRadius: 10)
+
+    var enemies = [SKShapeNode]()
+    var timer: Timer?
+    var prevTime: TimeInterval = 0
     
-    private var label : SKLabelNode?
-    private var spinnyNode : SKShapeNode?
+    var startTime: TimeInterval = 0
+    var isGameFinished = false
     
+    let playerAgent = GKAgent2D()
+    let agentSystem = GKComponentSystem(componentClass: GKAgent2D.self)
+    var enemyAgents = [GKAgent2D]()
+
     override func didMove(to view: SKView) {
+        player.fillColor = UIColor(red: 0.93, green: 0.96, blue: 0.00, alpha: 1.0)
+        addChild(player)
         
-        // Get label node from scene and store it for use later
-        self.label = self.childNode(withName: "//helloLabel") as? SKLabelNode
-        if let label = self.label {
-            label.alpha = 0.0
-            label.run(SKAction.fadeIn(withDuration: 2.0))
-        }
-        
-        // Create shape node to use during mouse interaction
-        let w = (self.size.width + self.size.height) * 0.05
-        self.spinnyNode = SKShapeNode.init(rectOf: CGSize.init(width: w, height: w), cornerRadius: w * 0.3)
-        
-        if let spinnyNode = self.spinnyNode {
-            spinnyNode.lineWidth = 2.5
-            
-            spinnyNode.run(SKAction.repeatForever(SKAction.rotate(byAngle: CGFloat(M_PI), duration: 1)))
-            spinnyNode.run(SKAction.sequence([SKAction.wait(forDuration: 0.5),
-                                              SKAction.fadeOut(withDuration: 0.5),
-                                              SKAction.removeFromParent()]))
-        }
-    }
-    
-    
-    func touchDown(atPoint pos : CGPoint) {
-        if let n = self.spinnyNode?.copy() as! SKShapeNode? {
-            n.position = pos
-            n.strokeColor = SKColor.green
-            self.addChild(n)
-        }
-    }
-    
-    func touchMoved(toPoint pos : CGPoint) {
-        if let n = self.spinnyNode?.copy() as! SKShapeNode? {
-            n.position = pos
-            n.strokeColor = SKColor.blue
-            self.addChild(n)
-        }
-    }
-    
-    func touchUp(atPoint pos : CGPoint) {
-        if let n = self.spinnyNode?.copy() as! SKShapeNode? {
-            n.position = pos
-            n.strokeColor = SKColor.red
-            self.addChild(n)
-        }
-    }
-    
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        if let label = self.label {
-            label.run(SKAction.init(named: "Pulse")!, withKey: "fadeInOut")
-        }
-        
-        for t in touches { self.touchDown(atPoint: t.location(in: self)) }
-    }
-    
-    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        for t in touches { self.touchMoved(toPoint: t.location(in: self)) }
+        setCreateEnemyTimer()
+        physicsWorld.gravity = CGVector()
     }
     
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        for t in touches { self.touchUp(atPoint: t.location(in: self)) }
+        touches.forEach {
+            let point = $0.location(in: self)
+            player.removeAllActions()
+            
+            let path = CGMutablePath()
+            path.move(to: CGPoint())
+            path.addLine(to: CGPoint(x: point.x - player.position.x, y: point.y - player.position.y))
+            player.run(SKAction.follow(path, speed: 50.0))
+        }
     }
     
-    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        for t in touches { self.touchUp(atPoint: t.location(in: self)) }
+    func setCreateEnemyTimer() {
+        timer?.invalidate()
+        // 5秒に一度、createEnemyを呼び出す処理
+        timer = Timer.scheduledTimer(timeInterval: 5.0, target: self, selector: #selector(GameScene.createEnemy), userInfo: nil, repeats: true)
+        timer?.fire()
     }
-    
+
+    func createEnemy() {
+        let enemy = SKShapeNode(circleOfRadius: 10)
+        enemy.position.x = size.width / 2
+        enemy.fillColor = UIColor(red: 0.94, green: 0.14, blue: 0.08, alpha: 1.0)
+        enemy.physicsBody = SKPhysicsBody(circleOfRadius: enemy.frame.width / 2)
+        addChild(enemy)
+        enemies.append(enemy)
+        
+        let anemyAgent = GKAgent2D()
+        anemyAgent.maxAcceleration = 30
+        anemyAgent.maxSpeed = 70
+        anemyAgent.position = vector_float2(x: Float(enemy.position.x), y: Float(enemy.position.y))
+        anemyAgent.delegate = self
+        anemyAgent.behavior = GKBehavior(goals: [
+            GKGoal(toSeekAgent: playerAgent),
+            ])
+        agentSystem.addComponent(anemyAgent)
+        enemyAgents.append(anemyAgent)
+    }
     
     override func update(_ currentTime: TimeInterval) {
-        // Called before each frame is rendered
+        if prevTime == 0 {
+            prevTime = currentTime
+            startTime = currentTime
+        }
+        
+        agentSystem.update(deltaTime: currentTime - prevTime)
+        playerAgent.position = vector_float2(x: Float(player.position.x), y: Float(player.position.y))
+        
+        if !isGameFinished {
+            for enemy in enemies {
+                let dx = enemy.position.x - player.position.x
+                let dy = enemy.position.y - player.position.y
+                if sqrt(dx*dx + dy*dy) < player.frame.width / 2 + enemy.frame.width / 2 {
+                    isGameFinished = true
+                    timer?.invalidate()
+                    let label = SKLabelNode(text: "記録:\(Int(currentTime - startTime))秒")
+                    label.fontSize = 80
+                    label.position = CGPoint(x: 0, y: -100)
+                    addChild(label)
+                    break
+                }
+            }
+        }
+        
+        prevTime = currentTime
+    }
+    
+}
+
+extension GameScene: GKAgentDelegate {
+    func agentDidUpdate(_ agent: GKAgent) {
+        if let agent = agent as? GKAgent2D, let index = enemyAgents.index(where: { $0 == agent }) {
+            let enemy = enemies[index]
+            enemy.position = CGPoint(x: CGFloat(agent.position.x), y: CGFloat(agent.position.y))
+        }
     }
 }
